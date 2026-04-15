@@ -1,0 +1,43 @@
+# HeyGem (Duix.Avatar) Docker Compose — bundled inside the Tauri AppImage.
+#
+# Invoked by the Rust shell during Setup Wizard step 5 ("数字人服务").
+# Requires:
+#   - Docker + NVIDIA Container Toolkit installed on the host
+#   - Available ports: 18180 (TTS), 8383 (video), 8384 (backend)
+#
+# Volumes are bind-mounted to the user data directory so that trained voices
+# and generated clips persist across upgrades.
+
+services:
+  heygem-tts:
+    image: guiji2025/heygem-tts:latest
+    container_name: heygem-tts
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "18180:18180"
+    volumes:
+      - heygem-voices:/app/voices
+      - heygem-audio:/app/audio
+
+  heygem-video:
+    image: guiji2025/heygem-video:latest
+    container_name: heygem-video
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "8383:8383"
+      - "8384:8384"
+    depends_on:
+      - heygem-tts
+    volumes:
+      - heygem-videos:/app/output
+
+volumes:
+  heygem-voices:
+  heygem-audio:
+  heygem-videos:
