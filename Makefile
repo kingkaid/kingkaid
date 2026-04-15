@@ -14,16 +14,24 @@
 RUST_TARGET ?= $(shell rustc -vV | sed -n 's|host: ||p')
 SIDECAR_NAME = api-$(RUST_TARGET)
 
-.PHONY: setup-dev dev test test-sidecar test-cloud build build-sidecar build-frontend build-tauri clean help
+.PHONY: bootstrap check setup-dev dev test test-sidecar test-cloud build build-sidecar build-frontend build-tauri clean help
 
 help:
 	@echo "KingKaid — available make targets:"
+	@echo "  bootstrap       Auto-detect + install all dependencies (recommended)"
+	@echo "  check           Check environment only (no install)"
 	@echo "  setup-dev       Install all dependencies (pnpm, uv, cargo)"
 	@echo "  dev             Show commands for launching 3 dev terminals"
 	@echo "  test            Run Python smoke tests (sidecar + cloud)"
 	@echo "  build-sidecar   PyInstaller → src-tauri/bin/$(SIDECAR_NAME)"
 	@echo "  build           Full production build → dist/"
 	@echo "  clean           Remove all build artifacts"
+
+bootstrap:
+	python3 scripts/bootstrap.py
+
+check:
+	python3 scripts/bootstrap.py --check
 
 setup-dev:
 	corepack enable pnpm

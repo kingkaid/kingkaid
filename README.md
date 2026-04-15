@@ -56,7 +56,35 @@ Tauri v2 (Rust 外壳)
 sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
-### 一键安装
+### 一键部署（推荐）
+
+自动检测环境 + 安装所有依赖 + 生成配置文件：
+
+**Windows（CMD）**：
+```cmd
+bootstrap.bat
+```
+
+**Linux / macOS**：
+```bash
+./bootstrap.sh
+```
+
+**或直接用 Python**（任何平台）：
+```bash
+python scripts/bootstrap.py            # 完整安装
+python scripts/bootstrap.py --check    # 仅检测环境，不安装
+```
+
+脚本会：
+1. 检测 Python / Node / Rust / git / uv / pnpm / Docker / NVIDIA GPU
+2. 自动安装 uv 和 pnpm（如果缺失）
+3. 执行 `pnpm install` + `uv sync`（python-backend + cloud-backend）
+4. 检测到 GPU 时自动安装 CUDA 版 PyTorch
+5. 从 `.env.example` 生成 `cloud-backend/.env` 模板
+6. 打印后续启动步骤
+
+### 旧式安装（仅限已配置好所有工具的环境）
 
 ```bash
 make setup-dev
