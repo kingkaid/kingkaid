@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    kingkaid_scaffold_lib::run()
+    kingkaid_lib::run()
 }

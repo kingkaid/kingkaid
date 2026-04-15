@@ -15,6 +15,7 @@ dependencies = [
     # 视频 / 音频
     "yt-dlp>=2025.1",
     "ffmpeg-python>=0.2",
+    "imageio-ffmpeg>=0.5",  # 捆绑 ffmpeg 静态二进制，避免依赖系统安装
     # 图像处理
     "Pillow>=10.4",
     "srt>=3.5",
