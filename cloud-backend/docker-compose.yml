@@ -1,0 +1,23 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=sqlite:////data/licenses.db
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
