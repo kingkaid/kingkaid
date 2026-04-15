@@ -11,7 +11,9 @@ dist-ssr/
 **/*.pyc
 **/*.egg-info/
 python-backend/dist/
+python-backend/.data/
 cloud-backend/dist/
+cloud-backend/licenses.db
 
 # Rust / Tauri
 src-tauri/target/
