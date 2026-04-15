@@ -72,14 +72,23 @@ async def extract_audio(video_path: Path, output_path: Path) -> Path:
 
 
 async def cut_segment(input_path: Path, start: float, end: float, output_path: Path) -> Path:
-    """Cut [start, end] from input video."""
+    """Cut [start, end] from input video.
+
+    Uses re-encoding (libx264 + aac) instead of stream copy to get frame-accurate
+    cuts. Stream copy would be faster but would align to keyframes, which can
+    drift by 1-2 seconds on typical encoded videos.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration = max(0.0, end - start)
     await _run_ffmpeg([
         "-ss", f"{start:.3f}",
         "-i", str(input_path),
         "-t", f"{duration:.3f}",
-        "-c", "copy",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-avoid_negative_ts", "make_zero",
         str(output_path),
     ])
     return output_path

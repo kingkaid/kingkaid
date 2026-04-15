@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db.session import init_db
-from routers import health, jobs, transcribe, rewrite, avatar
+from routers import health, jobs, transcribe, rewrite, avatar, clip
 from services.scheduler import get_scheduler, shutdown_scheduler
 
 
@@ -32,6 +32,7 @@ app.include_router(jobs.router, prefix="/api")
 app.include_router(transcribe.router, prefix="/api")
 app.include_router(rewrite.router, prefix="/api")
 app.include_router(avatar.router, prefix="/api")
+app.include_router(clip.router, prefix="/api")
 
 
 if __name__ == "__main__":
