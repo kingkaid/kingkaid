@@ -1,6 +1,6 @@
-"""Claude 代理路由 — 平台代付 Claude API，按许可证配额计费
+"""MiniMax 代理路由 — 平台代付 MiniMax API，按许可证配额计费
 
-流式 SSE 转发 Anthropic Messages API 至本地 Sidecar。
+流式 SSE 转发 MiniMax Messages API（Anthropic 兼容接口）至本地 Sidecar。
 """
 from datetime import datetime
 from typing import AsyncIterator
@@ -90,13 +90,17 @@ async def _stream_claude(
     db: Session,
     usage: Usage,
 ) -> AsyncIterator[bytes]:
-    """调用 Anthropic API 并以 SSE 格式转发到客户端。"""
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    """调用 MiniMax API（Anthropic 兼容接口）并以 SSE 格式转发到客户端。"""
+    client = anthropic.AsyncAnthropic(
+        api_key=settings.minimax_api_key,
+        base_url=settings.minimax_base_url,
+    )
 
     try:
         async with client.messages.stream(
-            model=settings.anthropic_model,
+            model=settings.minimax_model,
             max_tokens=2048,
+            temperature=1.0,
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         ) as stream:
