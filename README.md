@@ -58,8 +58,6 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 
 ### 一键部署（推荐）
 
-自动检测环境 + 安装所有依赖 + 生成配置文件：
-
 **Windows（CMD）**：
 ```cmd
 bootstrap.bat
@@ -70,19 +68,32 @@ bootstrap.bat
 ./bootstrap.sh
 ```
 
-**或直接用 Python**（任何平台）：
+**直接用 Python**（任何平台，更多选项）：
 ```bash
-python scripts/bootstrap.py            # 完整安装
-python scripts/bootstrap.py --check    # 仅检测环境，不安装
+python scripts/bootstrap.py                  # 默认：依赖 + .env + 测试许可证
+python scripts/bootstrap.py --check          # 仅检测，不安装
+python scripts/bootstrap.py --full           # 完整（含模型 + HeyGem 镜像 ~16GB）
+python scripts/bootstrap.py --install-system # 尝试通过 winget/apt/brew 自动装系统工具
+python scripts/bootstrap.py --download-models # 仅预下载 SenseVoice 模型
+python scripts/bootstrap.py --pull-heygem    # 仅拉取 HeyGem Docker 镜像
 ```
 
-脚本会：
-1. 检测 Python / Node / Rust / git / uv / pnpm / Docker / NVIDIA GPU
-2. 自动安装 uv 和 pnpm（如果缺失）
-3. 执行 `pnpm install` + `uv sync`（python-backend + cloud-backend）
-4. 检测到 GPU 时自动安装 CUDA 版 PyTorch
-5. 从 `.env.example` 生成 `cloud-backend/.env` 模板
-6. 打印后续启动步骤
+脚本的 10 个阶段：
+
+| Phase | 动作 | 默认 | `--full` |
+|-------|------|------|---------|
+| 1 | 环境检测（Python/Node/Rust/GPU/Docker 等） | ✅ | ✅ |
+| 2 | 系统工具自动安装（winget/apt/brew，需 `--install-system`） | — | — |
+| 3 | 自动安装 uv + pnpm | ✅ | ✅ |
+| 4 | 项目依赖（`pnpm install` + `uv sync` × 2） | ✅ | ✅ |
+| 5 | CUDA PyTorch（检测到 GPU 时） | ✅ | ✅ |
+| 6 | `.env` 配置文件生成 | ✅ | ✅ |
+| 7 | 云端 DB 初始化 + 生成测试许可证 | ✅ | ✅ |
+| 8 | SenseVoice 模型预下载（~900MB） | — | ✅ |
+| 9 | HeyGem Docker 镜像拉取（~15GB） | — | ✅ |
+| 10 | 打印启动步骤 + 许可证密钥 | ✅ | ✅ |
+
+完成后终端会打印一把 `SVTOOL-XXXX-XXXX-XXXX-XXXX` 测试许可证（同时保存到 `.test-license.txt`），Setup Wizard 里直接用。
 
 ### 旧式安装（仅限已配置好所有工具的环境）
 

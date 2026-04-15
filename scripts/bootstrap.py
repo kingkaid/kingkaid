@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-"""KingKaid — 一键环境检测 + 部署脚本
+"""KingKaid — 一键环境检测 + 部署脚本（跨平台）
 
-跨平台（Windows / Linux / macOS）自动化：
-  1. 检测系统依赖（Python / Node / Rust / uv / pnpm / git / Docker / NVIDIA）
-  2. 自动安装可以自动安装的工具（uv, pnpm）
-  3. 安装项目依赖（pnpm install + uv sync × 2）
-  4. 检测 GPU 并安装 CUDA 版 PyTorch
-  5. 生成 .env 配置文件模板
-  6. 打印后续启动步骤
+自动化流程：
+  Phase 1  系统工具检测（Python/Node/Rust/git/Docker/NVIDIA）
+  Phase 2  系统工具自动安装（Windows winget / Linux apt / macOS brew）
+  Phase 3  自动安装 uv + pnpm
+  Phase 4  项目依赖同步（pnpm install + uv sync × 2）
+  Phase 5  CUDA PyTorch 安装（检测到 NVIDIA GPU 时）
+  Phase 6  .env 配置文件生成
+  Phase 7  云端数据库初始化 + 生成测试许可证
+  Phase 8  SenseVoice 模型预下载（可选，~900MB）
+  Phase 9  HeyGem Docker 镜像拉取（可选，~15GB）
+  Phase 10 打印启动步骤
 
 用法:
-    python scripts/bootstrap.py                  # 完整安装
-    python scripts/bootstrap.py --check          # 仅检测，不安装
-    python scripts/bootstrap.py --skip-torch     # 跳过 CUDA PyTorch 安装
-    python scripts/bootstrap.py --skip-frontend  # 跳过前端依赖
+    python scripts/bootstrap.py                # 默认：跳过重度下载（Phase 8-9）
+    python scripts/bootstrap.py --full         # 完整安装，包含模型与 Docker 镜像
+    python scripts/bootstrap.py --check        # 仅检测，不安装
+    python scripts/bootstrap.py --download-models  # 只做模型下载
+    python scripts/bootstrap.py --pull-heygem      # 只拉取 HeyGem 镜像
+    python scripts/bootstrap.py --install-system  # 尝试自动安装系统工具
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -28,15 +35,12 @@ from pathlib import Path
 from typing import Optional
 
 # ─────────────────────────────────────────────────────────────────────────
-# 输出辅助
-# ─────────────────────────────────────────────────────────────────────────
 IS_WIN = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
 IS_LINUX = platform.system() == "Linux"
 
 if IS_WIN:
-    # Windows CMD 默认不支持 ANSI 色，关闭
-    RESET = BOLD = GREEN = YELLOW = RED = CYAN = ""
+    RESET = BOLD = GREEN = YELLOW = RED = CYAN = MAGENTA = ""
 else:
     RESET = "\033[0m"
     BOLD = "\033[1m"
@@ -44,6 +48,7 @@ else:
     YELLOW = "\033[33m"
     RED = "\033[31m"
     CYAN = "\033[36m"
+    MAGENTA = "\033[35m"
 
 
 def info(msg: str) -> None:
@@ -63,37 +68,31 @@ def err(msg: str) -> None:
 
 
 def section(title: str) -> None:
-    bar = "─" * 60
+    bar = "─" * 64
     print(f"\n{BOLD}{bar}\n  {title}\n{bar}{RESET}")
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 命令执行
-# ─────────────────────────────────────────────────────────────────────────
-def run(cmd: list[str] | str, cwd: Optional[Path] = None, check: bool = True) -> subprocess.CompletedProcess:
-    """统一的子进程调用。Windows 下 shell=True 处理 pnpm/uv.cmd。"""
-    if isinstance(cmd, list):
-        pretty = " ".join(cmd)
-    else:
-        pretty = cmd
+def run(cmd, cwd: Optional[Path] = None, check: bool = True, env=None) -> subprocess.CompletedProcess:
+    pretty = " ".join(cmd) if isinstance(cmd, list) else cmd
     print(f"  $ {pretty}")
     return subprocess.run(
         cmd,
         cwd=cwd,
         check=check,
         shell=isinstance(cmd, str) or IS_WIN,
+        env=env,
     )
 
 
-def capture(cmd: list[str] | str) -> Optional[str]:
-    """获取命令输出，失败返回 None。"""
+def capture(cmd) -> Optional[str]:
     try:
         out = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             shell=isinstance(cmd, str) or IS_WIN,
-            timeout=10,
+            timeout=15,
         )
         if out.returncode != 0:
             return None
@@ -103,14 +102,9 @@ def capture(cmd: list[str] | str) -> Optional[str]:
 
 
 def which(name: str) -> Optional[str]:
-    """跨平台 which。"""
-    # shutil.which 在 Windows 下会查 PATHEXT，支持 .cmd/.bat
     return shutil.which(name)
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# 检测器
-# ─────────────────────────────────────────────────────────────────────────
 def parse_version(text: Optional[str]) -> Optional[tuple[int, ...]]:
     if not text:
         return None
@@ -120,194 +114,357 @@ def parse_version(text: Optional[str]) -> Optional[tuple[int, ...]]:
     return tuple(int(x) for x in m.groups() if x is not None)
 
 
-def check_python() -> bool:
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 1 — 系统工具检测
+# ─────────────────────────────────────────────────────────────────────────
+def detect_environment() -> dict:
+    """返回每个关键工具的检测结果。"""
+    env = {}
+
+    # Python
     v = sys.version_info
-    if v.major == 3 and v.minor >= 11:
-        ok(f"Python {v.major}.{v.minor}.{v.micro}")
-        return True
-    err(f"Python {v.major}.{v.minor}.{v.micro}  (需要 >= 3.11)")
-    return False
+    env["python"] = {
+        "found": True,
+        "ok": v.major == 3 and v.minor >= 11,
+        "version": f"{v.major}.{v.minor}.{v.micro}",
+    }
+
+    # Node
+    node_path = which("node")
+    node_ver = parse_version(capture(["node", "--version"])) if node_path else None
+    env["node"] = {
+        "found": bool(node_path),
+        "ok": bool(node_ver and node_ver[0] >= 20),
+        "version": ".".join(map(str, node_ver)) if node_ver else None,
+    }
+
+    # Rust
+    cargo = which("cargo")
+    cargo_ver = parse_version(capture(["cargo", "--version"])) if cargo else None
+    env["rust"] = {
+        "found": bool(cargo),
+        "ok": bool(cargo_ver),
+        "version": ".".join(map(str, cargo_ver)) if cargo_ver else None,
+    }
+
+    # Git
+    env["git"] = {"found": bool(which("git")), "ok": bool(which("git"))}
+
+    # uv
+    uv_ver = capture(["uv", "--version"]) if which("uv") else None
+    env["uv"] = {"found": bool(uv_ver), "ok": bool(uv_ver), "version": uv_ver}
+
+    # pnpm
+    pnpm_ver = capture(["pnpm", "--version"]) if which("pnpm") else None
+    env["pnpm"] = {"found": bool(pnpm_ver), "ok": bool(pnpm_ver), "version": pnpm_ver}
+
+    # GPU
+    gpu_info = None
+    if which("nvidia-smi"):
+        gpu_info = capture(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"])
+    env["gpu"] = {"found": bool(gpu_info), "ok": bool(gpu_info), "info": gpu_info}
+
+    # Docker
+    env["docker"] = {
+        "found": bool(which("docker")),
+        "ok": bool(which("docker")),
+        "version": capture(["docker", "--version"]),
+    }
+
+    # ffmpeg (非必须)
+    env["ffmpeg"] = {"found": bool(which("ffmpeg")), "ok": True}
+
+    return env
 
 
-def check_node() -> bool:
-    if not which("node"):
-        err("Node.js 未安装  → https://nodejs.org/  (安装 20 LTS)")
-        return False
-    v = parse_version(capture(["node", "--version"]))
-    if v and v[0] >= 20:
-        ok(f"Node.js v{'.'.join(map(str, v))}")
-        return True
-    err(f"Node.js v{'.'.join(map(str, v or ()))}  (需要 >= 20)")
-    return False
+def print_env_report(env: dict) -> None:
+    def status(key: str, required: bool = True) -> None:
+        e = env[key]
+        label = {
+            "python": "Python >= 3.11",
+            "node": "Node.js >= 20",
+            "rust": "Rust (cargo)",
+            "git": "Git",
+            "uv": "uv",
+            "pnpm": "pnpm",
+            "gpu": "NVIDIA GPU",
+            "docker": "Docker",
+            "ffmpeg": "ffmpeg",
+        }[key]
+        version = e.get("version") or e.get("info") or ""
+        if e["ok"]:
+            ok(f"{label}  {version}")
+        elif required:
+            err(f"{label}  未安装或版本不符")
+        else:
+            warn(f"{label}  可选，未安装")
 
-
-def check_rust() -> bool:
-    if not which("cargo"):
-        err("Rust / cargo 未安装  → https://rustup.rs/")
-        return False
-    v = parse_version(capture(["cargo", "--version"]))
-    if v:
-        ok(f"Rust cargo {'.'.join(map(str, v))}")
-        return True
-    warn("cargo 已安装，但无法解析版本")
-    return True
-
-
-def check_git() -> bool:
-    if which("git"):
-        ok(f"git  ({capture(['git', '--version'])})")
-        return True
-    err("git 未安装  → https://git-scm.com/")
-    return False
-
-
-def check_uv() -> bool:
-    if which("uv"):
-        ok(f"uv  ({capture(['uv', '--version'])})")
-        return True
-    return False
-
-
-def check_pnpm() -> bool:
-    if which("pnpm"):
-        ok(f"pnpm  v{capture(['pnpm', '--version'])}")
-        return True
-    return False
-
-
-def check_gpu() -> bool:
-    if not which("nvidia-smi"):
-        warn("nvidia-smi 未找到  (无 GPU 将退化到 CPU 模式，SenseVoice 会慢 10×)")
-        return False
-    out = capture(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"])
-    if out:
-        ok(f"GPU: {out.splitlines()[0]}")
-        return True
-    warn("nvidia-smi 存在但无法查询 GPU 信息")
-    return False
-
-
-def check_docker() -> bool:
-    if not which("docker"):
-        warn("Docker 未安装  (HeyGem 数字人视频模块需要)")
-        return False
-    v = capture(["docker", "--version"])
-    ok(f"Docker  ({v})")
-    # 检测 NVIDIA Container Toolkit
-    if IS_LINUX:
-        nvidia_ct = capture(["docker", "info"])
-        if nvidia_ct and "nvidia" not in nvidia_ct.lower():
-            warn("Docker 未检测到 NVIDIA runtime  (HeyGem 需要)")
-    return True
-
-
-def check_ffmpeg() -> bool:
-    # 系统 ffmpeg 可有可无，因为 imageio-ffmpeg 会 bundle 一个
-    if which("ffmpeg"):
-        ok(f"ffmpeg  ({(capture(['ffmpeg', '-version']) or '').splitlines()[0] if capture(['ffmpeg', '-version']) else ''})")
-    else:
-        warn("系统 ffmpeg 未安装 — 会使用 imageio-ffmpeg 内置的静态二进制")
-    return True  # 非必须
+    status("python")
+    status("node")
+    status("rust")
+    status("git")
+    status("uv")
+    status("pnpm")
+    status("gpu", required=False)
+    status("docker", required=False)
+    status("ffmpeg", required=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 自动安装
+# Phase 2 — 系统工具自动安装（通过包管理器）
+# ─────────────────────────────────────────────────────────────────────────
+WINGET_PACKAGES = {
+    "python": "Python.Python.3.11",
+    "node": "OpenJS.NodeJS.LTS",
+    "rust": "Rustlang.Rustup",
+    "git": "Git.Git",
+}
+
+APT_PACKAGES = {
+    "python": "python3.11 python3.11-venv python3.11-dev",
+    "node": None,  # Node 需要 nodesource 仓库，单独处理
+    "rust": None,  # rustup
+    "git": "git",
+}
+
+BREW_PACKAGES = {
+    "python": "python@3.11",
+    "node": "node@20",
+    "rust": "rustup",
+    "git": "git",
+}
+
+
+def try_install_system(env: dict) -> None:
+    """尝试通过系统包管理器安装缺失的系统工具。"""
+    missing = [k for k in ("python", "node", "rust", "git") if not env[k]["ok"]]
+    if not missing:
+        ok("所有系统工具已就绪")
+        return
+
+    if IS_WIN:
+        if not which("winget"):
+            err("winget 未找到，无法自动安装系统工具")
+            print_manual_install_links(missing)
+            return
+        info(f"通过 winget 安装: {', '.join(missing)}")
+        for tool in missing:
+            pkg = WINGET_PACKAGES.get(tool)
+            if pkg:
+                try:
+                    run(["winget", "install", "-e", "--id", pkg, "--accept-package-agreements", "--accept-source-agreements"])
+                    ok(f"{tool} 安装完成")
+                except subprocess.CalledProcessError:
+                    err(f"{tool} 通过 winget 安装失败")
+        warn("某些工具需要重启 CMD 或系统才能生效，请重新运行 bootstrap.bat")
+
+    elif IS_LINUX:
+        if not which("apt"):
+            warn("非 Debian/Ubuntu 系，跳过自动安装")
+            print_manual_install_links(missing)
+            return
+        info(f"通过 apt 安装: {', '.join(missing)}")
+        for tool in missing:
+            if tool == "node":
+                info("Node.js 需要 nodesource 仓库，请参考 https://github.com/nodesource/distributions")
+                continue
+            if tool == "rust":
+                info("通过 rustup 安装 Rust ...")
+                try:
+                    run("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
+                    ok("Rust 安装完成（需要 source ~/.cargo/env 或重启 shell）")
+                except subprocess.CalledProcessError:
+                    err("Rust 安装失败")
+                continue
+            pkg = APT_PACKAGES.get(tool)
+            if pkg:
+                try:
+                    run(f"sudo apt update && sudo apt install -y {pkg}")
+                    ok(f"{tool} 安装完成")
+                except subprocess.CalledProcessError:
+                    err(f"{tool} 安装失败")
+
+    elif IS_MAC:
+        if not which("brew"):
+            err("Homebrew 未找到 → https://brew.sh/")
+            print_manual_install_links(missing)
+            return
+        info(f"通过 brew 安装: {', '.join(missing)}")
+        for tool in missing:
+            pkg = BREW_PACKAGES.get(tool)
+            if pkg:
+                try:
+                    run(["brew", "install", pkg])
+                    ok(f"{tool} 安装完成")
+                except subprocess.CalledProcessError:
+                    err(f"{tool} 安装失败")
+
+
+def print_manual_install_links(missing: list[str]) -> None:
+    links = {
+        "python": "Python 3.11: https://www.python.org/downloads/release/python-3118/",
+        "node": "Node.js 20 LTS: https://nodejs.org/",
+        "rust": "Rust: https://rustup.rs/",
+        "git": "Git: https://git-scm.com/downloads",
+    }
+    for t in missing:
+        print(f"  • {links.get(t, t)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 3 — 安装 uv + pnpm
 # ─────────────────────────────────────────────────────────────────────────
 def install_uv() -> bool:
-    info("尝试自动安装 uv ...")
+    info("通过 pip 安装 uv ...")
     try:
         run([sys.executable, "-m", "pip", "install", "--user", "uv"])
-        if which("uv"):
-            ok("uv 安装成功")
-            return True
+        return bool(which("uv"))
     except subprocess.CalledProcessError:
-        pass
-    err("uv 自动安装失败，请手动安装: pip install --user uv")
-    return False
+        err("uv 安装失败，请手动: pip install --user uv")
+        return False
 
 
 def install_pnpm() -> bool:
-    info("尝试通过 corepack 启用 pnpm ...")
+    info("通过 corepack 启用 pnpm ...")
     try:
         run(["corepack", "enable", "pnpm"])
         if which("pnpm"):
-            ok("pnpm 已启用")
             return True
     except subprocess.CalledProcessError:
         pass
-    info("尝试通过 npm 全局安装 pnpm ...")
+    info("通过 npm 全局安装 pnpm ...")
     try:
         run(["npm", "install", "-g", "pnpm"])
-        if which("pnpm"):
-            ok("pnpm 安装成功")
-            return True
+        return bool(which("pnpm"))
     except subprocess.CalledProcessError:
-        pass
-    err("pnpm 自动安装失败，请手动: npm install -g pnpm")
-    return False
+        err("pnpm 安装失败，请手动: npm install -g pnpm")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 项目依赖安装
+# Phase 4 — 项目依赖
 # ─────────────────────────────────────────────────────────────────────────
-def install_project_deps(root: Path, skip_frontend: bool, skip_torch: bool, has_gpu: bool) -> None:
-    section("Step 2 — 安装项目依赖")
-
+def install_project_deps(root: Path, skip_frontend: bool) -> None:
     if not skip_frontend:
-        info("安装前端依赖 (pnpm install)")
+        info("pnpm install")
         run(["pnpm", "install"], cwd=root)
 
-    info("同步 python-backend (uv sync)")
+    info("uv sync — python-backend")
     run(["uv", "sync"], cwd=root / "python-backend")
 
-    info("同步 cloud-backend (uv sync)")
+    info("uv sync — cloud-backend")
     run(["uv", "sync"], cwd=root / "cloud-backend")
 
-    if has_gpu and not skip_torch:
-        section("Step 3 — 安装 CUDA 版 PyTorch")
-        info("替换 python-backend 的 torch / torchaudio 为 CUDA 12.1 版本")
-        try:
-            run(
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "torch",
-                    "torchaudio",
-                    "--index-url",
-                    "https://download.pytorch.org/whl/cu121",
-                ],
-                cwd=root / "python-backend",
-            )
-            ok("PyTorch CUDA 安装完成")
-        except subprocess.CalledProcessError:
-            warn("PyTorch CUDA 安装失败，SenseVoice 将退化到 CPU 模式（仍可工作）")
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 5 — CUDA PyTorch
+# ─────────────────────────────────────────────────────────────────────────
+def install_cuda_pytorch(root: Path) -> None:
+    info("安装 CUDA 12.1 版 PyTorch")
+    try:
+        run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "torch",
+                "torchaudio",
+                "--index-url",
+                "https://download.pytorch.org/whl/cu121",
+            ],
+            cwd=root / "python-backend",
+        )
+        ok("PyTorch CUDA 安装完成")
+    except subprocess.CalledProcessError:
+        warn("PyTorch CUDA 安装失败，SenseVoice 将退化到 CPU 模式")
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# .env 文件生成
+# Phase 6 — .env 文件
 # ─────────────────────────────────────────────────────────────────────────
 def setup_env_files(root: Path) -> None:
-    section("Step 4 — 生成 .env 配置文件")
-
     cloud_env = root / "cloud-backend" / ".env"
     cloud_example = root / "cloud-backend" / ".env.example"
     if not cloud_env.exists() and cloud_example.exists():
         cloud_env.write_text(cloud_example.read_text(encoding="utf-8"), encoding="utf-8")
         ok(f"已创建 {cloud_env}")
-        warn("请编辑填入你的 MINIMAX_API_KEY")
+        warn("请编辑填入 MINIMAX_API_KEY")
     elif cloud_env.exists():
-        ok(f"{cloud_env} 已存在，跳过")
+        ok(f"{cloud_env} 已存在")
 
     sidecar_env = root / "python-backend" / ".env"
     if not sidecar_env.exists():
         sidecar_env.write_text(
-            "# Python Sidecar 配置\n"
             "CLOUD_BASE_URL=http://127.0.0.1:8090\n"
             "DATABASE_URL=sqlite:///./.data/app.db\n",
             encoding="utf-8",
         )
         ok(f"已创建 {sidecar_env}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 7 — 云端 DB 初始化 + 生成测试许可证
+# ─────────────────────────────────────────────────────────────────────────
+def init_cloud_db_and_license(root: Path) -> Optional[str]:
+    cloud = root / "cloud-backend"
+    info("初始化云端 SQLite + 生成测试许可证")
+    try:
+        result = subprocess.run(
+            ["uv", "run", "python", "scripts/gen_license.py",
+             "--max-devices", "3", "--monthly-limit", "1000", "--note", "bootstrap-test"],
+            cwd=cloud,
+            capture_output=True,
+            text=True,
+            shell=IS_WIN,
+            check=True,
+        )
+        print(result.stdout)
+        m = re.search(r"(SVTOOL(?:-[A-Z0-9]{4}){4})", result.stdout)
+        if m:
+            key = m.group(1)
+            ok(f"测试许可证已生成: {key}")
+            # 写到根目录的临时文件，方便用户复制
+            (root / ".test-license.txt").write_text(key, encoding="utf-8")
+            info(f"许可证保存到: {root}/.test-license.txt")
+            return key
+    except subprocess.CalledProcessError as e:
+        err(f"许可证生成失败: {e.stderr or e.stdout}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 8 — SenseVoice 模型预下载
+# ─────────────────────────────────────────────────────────────────────────
+def download_sensevoice_model(root: Path) -> None:
+    info("预下载 SenseVoice Small 模型（~900MB，首次较慢）")
+    code = (
+        "from modelscope import snapshot_download; "
+        "path = snapshot_download('iic/SenseVoiceSmall'); "
+        "print(f'✓ SenseVoice 模型已下载到: {path}')"
+    )
+    try:
+        run(
+            ["uv", "run", "python", "-c", code],
+            cwd=root / "python-backend",
+        )
+    except subprocess.CalledProcessError:
+        warn("模型下载失败，应用首次启动时会自动重试")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 9 — HeyGem Docker 镜像拉取
+# ─────────────────────────────────────────────────────────────────────────
+def pull_heygem_images(root: Path) -> None:
+    if not which("docker"):
+        warn("Docker 未安装，跳过 HeyGem 镜像拉取")
+        return
+    info("拉取 HeyGem Docker 镜像（~15GB，非常慢）")
+    compose = root / "src-tauri" / "resources" / "heygem-compose.yml"
+    try:
+        run(["docker", "compose", "-f", str(compose), "pull"])
+        ok("HeyGem 镜像拉取完成")
+    except subprocess.CalledProcessError:
+        err("HeyGem 镜像拉取失败，可稍后手动执行")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -318,91 +475,133 @@ def main() -> int:
         description="KingKaid 一键环境部署",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--check", action="store_true", help="仅检测环境，不安装任何东西")
-    parser.add_argument("--skip-torch", action="store_true", help="跳过 CUDA PyTorch 安装")
+    parser.add_argument("--check", action="store_true", help="仅检测环境，不安装")
+    parser.add_argument("--full", action="store_true", help="完整安装（含模型 + HeyGem 镜像）")
+    parser.add_argument("--install-system", action="store_true", help="自动安装系统工具（需包管理器）")
+    parser.add_argument("--skip-torch", action="store_true", help="跳过 CUDA PyTorch")
     parser.add_argument("--skip-frontend", action="store_true", help="跳过前端依赖")
+    parser.add_argument("--download-models", action="store_true", help="预下载 SenseVoice 模型")
+    parser.add_argument("--pull-heygem", action="store_true", help="拉取 HeyGem Docker 镜像")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent.parent
     print(f"{BOLD}KingKaid Bootstrap{RESET}  —  {root}")
     print(f"Platform: {platform.system()} {platform.release()}  |  Python: {sys.version.split()[0]}")
 
-    # ── Step 1 — 检测必要工具 ──
-    section("Step 1 — 环境检测")
+    # ── Phase 1: 环境检测 ──
+    section("Phase 1 — 环境检测")
+    env = detect_environment()
+    print_env_report(env)
 
-    py_ok = check_python()
-    node_ok = check_node()
-    rust_ok = check_rust()
-    git_ok = check_git()
-    has_gpu = check_gpu()
-    check_docker()
-    check_ffmpeg()
+    # ── Phase 2: 系统工具自动安装（可选） ──
+    if args.install_system and not args.check:
+        section("Phase 2 — 系统工具自动安装")
+        try_install_system(env)
+        # 重新检测
+        env = detect_environment()
+        print_env_report(env)
 
-    # 检测 + 自动安装可以自动处理的工具
-    uv_ok = check_uv()
-    if not uv_ok and not args.check:
-        uv_ok = install_uv()
+    # ── Phase 3: uv + pnpm 自动安装 ──
+    if not args.check:
+        if not env["uv"]["ok"]:
+            section("Phase 3 — 安装 uv")
+            if install_uv():
+                env["uv"]["ok"] = True
+        if not env["pnpm"]["ok"] and env["node"]["ok"]:
+            section("Phase 3 — 安装 pnpm")
+            if install_pnpm():
+                env["pnpm"]["ok"] = True
 
-    pnpm_ok = check_pnpm()
-    if not pnpm_ok and not args.check and node_ok:
-        pnpm_ok = install_pnpm()
-
-    # 硬性依赖检查
+    # ── 硬性依赖检查 ──
     hard_deps = {
-        "Python >= 3.11": py_ok,
-        "Node.js >= 20": node_ok,
-        "Rust (cargo)": rust_ok,
-        "git": git_ok,
-        "uv": uv_ok,
-        "pnpm": pnpm_ok,
+        "Python >= 3.11": env["python"]["ok"],
+        "Node.js >= 20": env["node"]["ok"],
+        "Rust (cargo)": env["rust"]["ok"],
+        "git": env["git"]["ok"],
+        "uv": env["uv"]["ok"],
+        "pnpm": env["pnpm"]["ok"],
     }
-    missing = [name for name, ok_ in hard_deps.items() if not ok_]
+    missing = [n for n, o in hard_deps.items() if not o]
     if missing:
         err(f"\n缺失必要依赖: {', '.join(missing)}")
-        err("请按上方提示安装后重新运行此脚本")
+        if IS_WIN:
+            warn("提示: 加 --install-system 参数尝试通过 winget 自动安装")
+        err("安装后重新运行此脚本")
         return 1
 
     if args.check:
-        section("Check-only 模式 — 检测完成")
-        ok("所有必要依赖已就绪，可直接运行: python scripts/bootstrap.py")
+        section("Check-only 完成")
+        ok("环境就绪，运行 python scripts/bootstrap.py 继续安装")
         return 0
 
-    # ── Step 2-4 — 安装项目依赖 + 配置文件 ──
+    # ── Phase 4: 项目依赖 ──
     try:
-        install_project_deps(root, args.skip_frontend, args.skip_torch, has_gpu)
-        setup_env_files(root)
+        section("Phase 4 — 项目依赖")
+        install_project_deps(root, args.skip_frontend)
     except subprocess.CalledProcessError as e:
-        err(f"安装过程出错: {e}")
+        err(f"项目依赖安装失败: {e}")
         return 2
 
-    # ── 完成 ──
+    # ── Phase 5: CUDA PyTorch ──
+    if env["gpu"]["ok"] and not args.skip_torch:
+        section("Phase 5 — CUDA PyTorch")
+        install_cuda_pytorch(root)
+
+    # ── Phase 6: .env 文件 ──
+    section("Phase 6 — .env 配置文件")
+    setup_env_files(root)
+
+    # ── Phase 7: 云端 DB + 测试许可证 ──
+    section("Phase 7 — 云端数据库 + 测试许可证")
+    license_key = init_cloud_db_and_license(root)
+
+    # ── Phase 8: SenseVoice 模型（可选） ──
+    if args.full or args.download_models:
+        section("Phase 8 — SenseVoice 模型预下载")
+        download_sensevoice_model(root)
+    else:
+        info("跳过 SenseVoice 模型预下载（加 --full 或 --download-models 启用）")
+
+    # ── Phase 9: HeyGem Docker 镜像（可选） ──
+    if args.full or args.pull_heygem:
+        section("Phase 9 — HeyGem Docker 镜像")
+        pull_heygem_images(root)
+    else:
+        info("跳过 HeyGem 镜像拉取（~15GB，加 --full 或 --pull-heygem 启用）")
+
+    # ── Phase 10: 打印后续步骤 ──
     section("部署完成")
     print(
         f"""
-{GREEN}✓{RESET} KingKaid 环境就绪
+{GREEN}✓{RESET} KingKaid 环境已就绪
 
-{BOLD}接下来启动开发环境（需要 3 个终端）：{RESET}
+{BOLD}接下来的启动顺序（需要 3 个终端）：{RESET}
 
-  {CYAN}[1] 云端服务（许可证 + MiniMax 代理）{RESET}
+  {CYAN}[终端 1] 云端服务（许可证 + MiniMax 代理）{RESET}
       cd cloud-backend
       uv run python main.py --port 8090
 
-  {CYAN}[2] Python Sidecar（yt-dlp + SenseVoice + ffmpeg）{RESET}
+  {CYAN}[终端 2] Python Sidecar（yt-dlp + SenseVoice + ffmpeg）{RESET}
       cd python-backend
       uv run python main.py --port 8000
 
-  {CYAN}[3] Tauri 桌面应用（React UI）{RESET}
+  {CYAN}[终端 3] Tauri 桌面应用（React 前端 + Rust 外壳）{RESET}
       pnpm tauri dev
 
-  {CYAN}[可选] HeyGem 数字人 Docker 服务{RESET}
+  {CYAN}[可选] HeyGem 数字人 Docker 服务（需 GPU）{RESET}
       docker compose -f src-tauri/resources/heygem-compose.yml up -d
 
-{BOLD}首次使用请：{RESET}
-  1. 编辑 cloud-backend/.env 填入 MINIMAX_API_KEY
-  2. 生成测试许可证:  cd cloud-backend && uv run python scripts/gen_license.py
-  3. 启动服务后在应用内走完 Setup Wizard
+{BOLD}首次启动必做：{RESET}
+  1. 编辑 {MAGENTA}cloud-backend/.env{RESET} 填入 MINIMAX_API_KEY
+  2. 在应用 Setup Wizard 里输入测试许可证:
 """
     )
+    if license_key:
+        print(f"     {BOLD}{MAGENTA}{license_key}{RESET}")
+    else:
+        print(f"     (重跑 scripts/gen_license.py 生成)")
+    print()
+
     return 0
 
 

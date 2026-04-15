@@ -48,3 +48,4 @@ Thumbs.db
 .idea/
 *.suo
 *.sw?
+.test-license.txt
