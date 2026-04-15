@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db.session import init_db
-from routers import health, jobs, transcribe, rewrite, avatar, clip, mashup, subtitle, cover, bgm, voice, title, compliance
+from routers import health, jobs, transcribe, rewrite, avatar, clip, mashup, subtitle, cover, bgm, voice, title, compliance, analyze
 from routers import pip as pip_router
 from services.scheduler import get_scheduler, shutdown_scheduler
 
@@ -42,6 +42,7 @@ app.include_router(bgm.router, prefix="/api")
 app.include_router(voice.router, prefix="/api")
 app.include_router(title.router, prefix="/api")
 app.include_router(compliance.router, prefix="/api")
+app.include_router(analyze.router, prefix="/api")
 
 
 if __name__ == "__main__":

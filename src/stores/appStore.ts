@@ -14,11 +14,15 @@ export interface AppState {
   licenseValid: boolean;
   remainingCalls: number;
 
+  // Cross-module share bus: e.g. analyze → xigao/title/compliance
+  sharedTranscript: string | null;
+
   // Actions
   setWizardStep: (step: WizardStep) => void;
   completeWizard: () => void;
   setLicense: (key: string, fingerprint: string, remaining: number) => void;
   resetWizard: () => void;
+  setSharedTranscript: (text: string | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -30,6 +34,7 @@ export const useAppStore = create<AppState>()(
       deviceFingerprint: null,
       licenseValid: false,
       remainingCalls: 0,
+      sharedTranscript: null,
 
       setWizardStep: (step) => set({ wizardStep: step }),
       completeWizard: () => set({ wizardComplete: true }),
@@ -47,6 +52,7 @@ export const useAppStore = create<AppState>()(
           licenseKey: null,
           licenseValid: false,
         }),
+      setSharedTranscript: (text) => set({ sharedTranscript: text }),
     }),
     {
       name: "kingkaid-app-state",

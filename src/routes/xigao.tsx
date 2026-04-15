@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Scissors, AlertCircle } from "lucide-react";
 import { UrlInput } from "../components/xigao/UrlInput";
 import { TranscriptView } from "../components/xigao/TranscriptView";
 import { RewriteStream } from "../components/xigao/RewriteStream";
 import { apiPost, apiGet } from "../lib/api";
+import { useAppStore } from "../stores/appStore";
 
 interface TranscribeJob {
   job_id: string;
@@ -19,10 +20,21 @@ interface TranscribeJob {
 }
 
 export default function XigaoPage() {
+  const shared = useAppStore((s) => s.sharedTranscript);
+  const clearShared = useAppStore((s) => s.setSharedTranscript);
   const [url, setUrl] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [directTranscript, setDirectTranscript] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (shared) {
+      setDirectTranscript(shared);
+      setJobId(null);
+      clearShared(null);
+    }
+  }, [shared, clearShared]);
 
   const { data: job } = useQuery<TranscribeJob>({
     queryKey: ["transcribe-job", jobId],
@@ -50,6 +62,8 @@ export default function XigaoPage() {
 
   const isRunning = job?.status === "queued" || job?.status === "running";
   const hasTranscript = job?.status === "done" && job.result?.transcript;
+  const effectiveTranscript = directTranscript || (hasTranscript ? job!.result.transcript! : null);
+  const effectiveEmotion = hasTranscript ? job?.result?.emotion : null;
 
   return (
     <div className="p-6">
@@ -106,14 +120,14 @@ export default function XigaoPage() {
         </div>
       )}
 
-      {hasTranscript && (
+      {effectiveTranscript && (
         <div className="space-y-4">
           <TranscriptView
-            transcript={job.result.transcript!}
-            emotion={job.result.emotion}
-            duration={job.result.duration}
+            transcript={effectiveTranscript}
+            emotion={effectiveEmotion}
+            duration={hasTranscript ? job?.result?.duration : undefined}
           />
-          <RewriteStream transcript={job.result.transcript!} emotion={job.result.emotion} />
+          <RewriteStream transcript={effectiveTranscript} emotion={effectiveEmotion} />
         </div>
       )}
     </div>

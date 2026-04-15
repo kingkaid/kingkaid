@@ -1,16 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Hash, Loader2, AlertCircle, Copy, Check } from "lucide-react";
 import { apiBase } from "../lib/api";
 import { useAppStore } from "../stores/appStore";
 
 export default function TitlePage() {
+  const shared = useAppStore((s) => s.sharedTranscript);
+  const clearShared = useAppStore((s) => s.setSharedTranscript);
   const [transcript, setTranscript] = useState("");
+
+  useEffect(() => {
+    if (shared) {
+      setTranscript(shared);
+      clearShared(null);
+    }
+  }, [shared, clearShared]);
   const [count, setCount] = useState(10);
   const [output, setOutput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const { licenseKey, deviceFingerprint } = useAppStore();
+  const licenseKey = useAppStore((s) => s.licenseKey);
+  const deviceFingerprint = useAppStore((s) => s.deviceFingerprint);
 
   const startGenerate = async () => {
     if (!licenseKey || !deviceFingerprint) {

@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ShieldAlert, Loader2, AlertCircle, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { apiPost } from "../lib/api";
+import { useAppStore } from "../stores/appStore";
 
 interface FlaggedWord {
   word: string;
@@ -49,10 +50,19 @@ const LEVEL_META = {
 } as const;
 
 export default function CompliancePage() {
+  const shared = useAppStore((s) => s.sharedTranscript);
+  const clearShared = useAppStore((s) => s.setSharedTranscript);
   const [text, setText] = useState("");
   const [result, setResult] = useState<CheckResponse | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (shared) {
+      setText(shared);
+      clearShared(null);
+    }
+  }, [shared, clearShared]);
 
   const check = async () => {
     setChecking(true);
