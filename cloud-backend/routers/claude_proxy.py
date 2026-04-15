@@ -90,10 +90,15 @@ async def _stream_claude(
     db: Session,
     usage: Usage,
 ) -> AsyncIterator[bytes]:
-    """调用 MiniMax API（Anthropic 兼容接口）并以 SSE 格式转发到客户端。"""
+    """调用 MiniMax API（Anthropic 兼容接口）并以 SSE 格式转发到客户端。
+
+    MiniMax 使用 `Authorization: Bearer <key>` 鉴权，不识别 Anthropic SDK 默认的
+    `x-api-key` 头，因此这里通过 default_headers 覆盖。api_key 字段设为占位符即可。
+    """
     client = anthropic.AsyncAnthropic(
-        api_key=settings.minimax_api_key,
+        api_key="not-used",
         base_url=settings.minimax_base_url,
+        default_headers={"Authorization": f"Bearer {settings.minimax_api_key}"},
     )
 
     try:
