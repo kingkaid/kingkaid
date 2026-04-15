@@ -1,0 +1,39 @@
+[project]
+name = "kingkaid-sidecar"
+version = "1.0.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # HTTP 服务
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.9",
+    # AI 推理（SenseVoice）— 在 Stage 3 激活 GPU 环境后安装
+    # "funasr>=1.2",
+    # "modelscope>=1.20",
+    # "torch>=2.3",      # 通过 uv pip install --extra-index-url https://download.pytorch.org/whl/cu121 安装
+    # "torchaudio>=2.3",
+    # 视频 / 音频
+    "yt-dlp>=2025.1",
+    "ffmpeg-python>=0.2",
+    # 图像处理
+    "Pillow>=10.4",
+    "srt>=3.5",
+    # 数据库 + 任务队列
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    "apscheduler>=3.10",
+    # HTTP 客户端
+    "httpx[http2]>=0.27",
+    "httpx-sse>=0.4",
+    # 通用
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "aiofiles>=23.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pyinstaller>=6.10",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

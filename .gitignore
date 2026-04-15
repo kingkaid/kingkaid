@@ -1,0 +1,48 @@
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.pnpm-store/
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+python-backend/dist/
+cloud-backend/dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/bin/api-*
+
+# AI Models (never commit)
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Local config
+.env
+.env.local
+.npmrc
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
